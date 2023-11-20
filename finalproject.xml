@@ -1,0 +1,177 @@
+
+import numpy as np
+import pandas as pd
+import re
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem.wordnet import WordNetLemmatizer
+from nltk.stem import PorterStemmer
+import requests
+from bs4 import BeautifulSoup
+
+# Load the product dataset
+df = pd.read_csv('skincare_products.csv')
+
+# Define the skin care categories
+skin_care_categories = ['Moisturizers', 'Face Serums', 'Face Wash & Cleansers', 'Face Masks', 
+                       'Eye Creams & Treatments', 'Toners', 'Face Oils', 'Face Sunscreen', 
+                       'Sheet Masks', 'Facial Peels', 'Skincare', 'Exfoliators', 'Face Sets', 
+                       'Anti-Aging', 'For Face']
+
+# Filter the dataset to only include skin care products
+df_skin_care = df[df['category'].isin(skin_care_categories)]
+
+# Define a function to clean and tokenize the text data
+def clean_and_tokenize(text):
+    # Convert to lowercase
+    text = text.lower()
+    # Remove punctuation characters
+    text = re.sub(r"[^a-zA-Z0-9]", " ", text)
+    text = text.strip('\n')
+    # Remove titles
+    titles = '|'.join(['what it is', 'skin type', 'skincare concerns', 'formulation', 
+                       'highlighted ingredients', 'ingredient callouts', 
+                       'what else you need to know', 'clinical results'])
+    text = re.sub(titles, "", text)
+    # Tokenize into words
+    tokens = nltk.word_tokenize(text)
+    # Remove stopwords
+    words = [x for x in tokens if x not in stopwords.words("english")]
+    # Remove n's
+    words = [x for x in words if x != 'n']
+    # Lemmatize, but do not lemmatize 'sls' and 'sles' terms
+    lemmatizer = WordNetLemmatizer()
+    lemmatized = [lemmatizer.lemmatize(word) if word not in ['sls', 'sles'] else word for word in words]
+    return lemmatized
+
+# Clean and tokenize the product descriptions
+df_skin_care['cleaned_description'] = df_skin_care['product_description'].apply(clean_and_tokenize)
+
+# Define a function to extract the user's skin type and concerns from input text
+def extract_skin_type_and_concerns(text):
+    # Define the possible skin types and concerns
+    skin_types = ['oily', 'dry', 'combination', 'normal', 'sensitive']
+    concerns = ['acne', 'aging', 'dark spots', 'dryness', 'dullness', 'oiliness', 'pores', 'redness', 'sensitivity', 'uneven skin tone']
+
+    # Extract the skin type and concerns using regex
+    skin_type = None
+    skin_type_match = re.search(r'\bskin type:?\b\s*(\w+)', text, re.IGNORECASE)
+    if skin_type_match:
+        skin_type = skin_type_match.group(1).lower()
+        if skin_type not in skin_types:
+            skin_type = None
+
+    skin_concerns = []
+    for concern in concerns:
+        if re.search(rf'\b{concern}\b', text, re.IGNORECASE):
+            skin_concerns.append(concern)
+
+    return skin_type, skin_concerns
+
+
+# Define function to process user input
+def process_input(user_input):
+    """
+    This function processes the user's input by tokenizing the text, removing stop words, and lemmatizing the remaining words.
+    
+    Parameters:
+    -----------
+    user_input : str
+        The user's input as a string.
+    
+    Returns:
+    --------
+    list
+        A list of processed words.
+    """
+    # Tokenize input
+    tokens = nltk.word_tokenize(user_input.lower())
+    
+    # Remove stop words
+    stop_words = stopwords.words('english')
+    words = [word for word in tokens if word not in stop_words]
+    
+    # Lemmatize remaining words
+    lemmatizer = WordNetLemmatizer()
+    words = [lemmatizer.lemmatize(word) for word in words]
+    
+    return words
+
+
+# Define function to get skin type and concerns from user
+def get_skin_type_and_concerns():
+    """
+    This function prompts the user for their skin type and concerns and returns a tuple of two lists: one for skin types and one for concerns.
+    
+    Returns:
+    --------
+    tuple
+        A tuple of two lists: one for skin types and one for concerns.
+    """
+    print('Welcome to the skin care recommendation system!')
+    print('Please enter your skin type (e.g. dry, oily, combination, sensitive):')
+    skin_type_input = input()
+    
+    print('Please enter your skin concerns (e.g. acne, dark spots, wrinkles, dryness):')
+    skin_concerns_input = input()
+    
+    skin_types = process_input(skin_type_input)
+    skin_concerns = process_input(skin_concerns_input)
+    
+    return skin_types, skin_concerns
+
+
+# Define function to filter products by skin type and concerns
+def filter_products(skin_types, skin_concerns):
+    """
+    This function filters the product dataset by the user's skin type and concerns.
+    
+    Parameters:
+    -----------
+    skin_types : list
+        A list of skin types as strings.
+    skin_concerns : list
+        A list of skin concerns as strings.
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        A filtered dataframe of products that match the user's skin type and concerns.
+    """
+    # Combine skin type and concerns into one list
+    skin_types_and_concerns = skin_types + skin_concerns
+    
+    # Define function to check if any skin type or concern is in a product description
+    def has_skin_type_or_concern(description):
+        return any(word in process_input(description) for word in skin_types_and_concerns)
+    
+    # Filter products by skin type and concerns
+    filtered_df = df_skin[df_skin['product_description'].apply(has_skin_type_or_concern)]
+    
+    return filtered_df
+
+
+# Define function to generate recommendations
+def generate_recommendations(skin_types, skin_concerns):
+    """
+    This function generates product recommendations based on the user's skin type and concerns.
+    
+    Parameters:
+    -----------
+    skin_types : list
+        A list of skin types as strings.
+    skin_concerns : list
+        A list of skin concerns as strings.
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        A dataframe of recommended products.
+    """
+    # Filter products by skin type and concerns
+    filtered_df = filter_products(skin_types, skin_concerns)
+    
+    # Sort products by average rating and number of ratings
+    sorted_df = filtered_df.sort_values(by=['number_of_reviews', 'rating'], ascending=False)
+    
+    # Select top 10
